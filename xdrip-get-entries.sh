@@ -1465,7 +1465,7 @@ function check_glucometer_calibration()
   if [[ "$found_meterbg" == false ]]; then
     # can't use the Sensor insert UTC determination for BG since they can
     # be entered in either UTC or local time depending on how they were entered.
-    curl --compressed -m 30 -H "API-SECRET: ${API_SECRET}" "${ns_url}/api/v1/entries/mbg.json?find\[device\]\[$regex\]=Bluetooth+Glucose+Meter:&count=1" 2>/dev/null > $METERBG_NS_RAW
+    curl --compressed -m 30 -H "API-SECRET: ${API_SECRET}" "${ns_url}/api/v1/entries/mbg.json?find\[device\]\[\$regex\]=Bluetooth+Glucose+Meter:&count=1" 2>/dev/null > $METERBG_NS_RAW
     createdAt=$(jq -r ".[0].dateString" $METERBG_NS_RAW)
     if [ "$createdAt" == "null" ] ; then 
         return
