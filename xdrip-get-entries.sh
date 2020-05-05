@@ -161,6 +161,7 @@ main()
   check_cmd_line_calibration
   check_pump_history_calibration
   check_ns_calibration
+  check_glucometer_calibration
   check_messages
 
   remove_dexcom_bt_pair
@@ -1455,6 +1456,57 @@ function check_variation()
   fi
 }
 
+function check_glucometer_calibration()
+{
+  if [ "$mode" == "read-only" ]; then
+    return
+  fi
+
+  if [[ "$found_meterbg" == false ]]; then
+    # can't use the Sensor insert UTC determination for BG since they can
+    # be entered in either UTC or local time depending on how they were entered.
+    curl --compressed -m 30 -H "API-SECRET: ${API_SECRET}" "${ns_url}/api/v1/entries/mbg.json?find\[device\]\[$regex\]=Bluetooth+Glucose+Meter:&count=1" 2>/dev/null > $METERBG_NS_RAW
+    createdAt=$(jq -r ".[0].dateString" $METERBG_NS_RAW)
+    if [ "$createdAt" == "null" ] ; then 
+        return
+    fi
+    secNow=`date +%s`
+    secThen=`date +%s --date=$createdAt`
+    secThenMs=`date +%s%3N --date=$createdAt`
+    elapsed=$(bc <<< "($secNow - $secThen)")
+    log "meterbg date=$createdAt, secNow=$secNow, secThen=$secThen, elapsed=$elapsed"
+    if [ $(bc <<< "$elapsed < 540") -eq 1 ]; then
+      # note: pumphistory bg has no _id field, but .timestamp matches .created_at
+      enteredBy=$(jq ".[0].device" $METERBG_NS_RAW)
+      enteredBy="${enteredBy%\"}"
+      enteredBy="${enteredBy#\"}"
+      if [[ "$enteredBy" == *"Logger"* ]]; then
+        # Logger knows about it already so don't process again
+        return
+      fi
+
+      meterbgid=$(jq ".[0].dateString" $METERBG_NS_RAW)
+      meterbgid="${meterbgid%\"}"
+      meterbgid="${meterbgid#\"}"
+      meterbgunits=$(cat $METERBG_NS_RAW | jq -M '.[0] | .units')
+      meterbg=`jq -M '.[0] .mbg' $METERBG_NS_RAW`
+      meterbg="${meterbg%\"}"
+      meterbg="${meterbg#\"}"
+      if [[ "$meterbgunits" == *"mmol"* ]]; then
+        meterbg=$(bc <<< "($meterbg *18)/1")
+      fi
+      found_meterbg=true
+      # nothing to do here except prepare xdrip-js message 
+      calDate=$secThenMs
+      addToMessages "[{\"date\": ${calDate}, \"type\": \"CalibrateSensor\",\"glucose\": $meterbg}]" $calibrationMessageFile
+    log "meterbg from nightscout: $meterbg, date=$calDate"
+    else
+      # clear old meterbg curl responses
+      rm $METERBG_NS_RAW
+    fi
+  fi
+}
+
 function check_ns_calibration()
 {
   if [ "$mode" == "read-only" ]; then
@@ -1464,7 +1516,7 @@ function check_ns_calibration()
   if [[ "$found_meterbg" == false ]]; then
     # can't use the Sensor insert UTC determination for BG since they can
     # be entered in either UTC or local time depending on how they were entered.
-    curl --compressed -m 30 -H "API-SECRET: ${API_SECRET}" "${ns_url}/api/v1/treatments.json?find\[eventType\]\[\$regex\]=Check&count=1" 2>/dev/null > $METERBG_NS_RAW
+    curl --compressed -m 30 -H "API-SECRET: ${API_SECRET}" "${ns_url}/api/v1/treatments.json?find\[eventType\]=BG+Check&count=1" 2>/dev/null > $METERBG_NS_RAW
     createdAt=$(jq -r ".[0].created_at" $METERBG_NS_RAW)
     if [ "$createdAt" == "null" ] ; then 
         return
@@ -1473,7 +1525,7 @@ function check_ns_calibration()
     secThen=`date +%s --date=$createdAt`
     secThenMs=`date +%s%3N --date=$createdAt`
     elapsed=$(bc <<< "($secNow - $secThen)")
-    #log "meterbg date=$createdAt, secNow=$secNow, secThen=$secThen, elapsed=$elapsed"
+    log "meterbg date=$createdAt, secNow=$secNow, secThen=$secThen, elapsed=$elapsed"
     if [ $(bc <<< "$elapsed < 540") -eq 1 ]; then
       # note: pumphistory bg has no _id field, but .timestamp matches .created_at
       enteredBy=$(jq ".[0].enteredBy" $METERBG_NS_RAW)
